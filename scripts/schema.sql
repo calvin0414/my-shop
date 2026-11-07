@@ -64,3 +64,31 @@ CREATE TABLE IF NOT EXISTS payments (
   raw               JSONB NOT NULL,
   received_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ===== 優惠碼（2026-11 新增）=====
+
+-- 優惠碼：一組碼一筆。不提供刪除，停用改 active。
+CREATE TABLE IF NOT EXISTS coupons (
+  id              SERIAL PRIMARY KEY,
+  code            TEXT NOT NULL,                               -- 一律存大寫，例如 SPRING100
+  kind            TEXT NOT NULL CHECK (kind IN ('amount','percent')),
+  value           INTEGER NOT NULL CHECK (value > 0),          -- amount：折幾元；percent：折掉幾 %（10 代表九折）
+  min_subtotal    INTEGER NOT NULL DEFAULT 0 CHECK (min_subtotal >= 0),
+  starts_at       TIMESTAMPTZ,                                 -- 空白代表立即生效
+  ends_at         TIMESTAMPTZ,                                 -- 空白代表沒有期限
+  max_uses        INTEGER CHECK (max_uses IS NULL OR max_uses > 0),  -- 空白代表不限總次數
+  per_email_limit INTEGER NOT NULL DEFAULT 1 CHECK (per_email_limit > 0),
+  active          BOOLEAN NOT NULL DEFAULT true,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (kind <> 'percent' OR value <= 99),
+  CHECK (ends_at IS NULL OR starts_at IS NULL OR ends_at > starts_at)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS coupons_code_key ON coupons (code);
+
+-- 訂單：記下用了哪個碼、折了多少。舊訂單自動是「沒用碼、折 0 元」。
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS coupon_id   INTEGER REFERENCES coupons(id);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS coupon_code TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS discount    INTEGER NOT NULL DEFAULT 0 CHECK (discount >= 0);
+
+-- 查「某個碼被付款用了幾次」時用
+CREATE INDEX IF NOT EXISTS orders_coupon_id_idx ON orders (coupon_id) WHERE coupon_id IS NOT NULL;

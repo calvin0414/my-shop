@@ -2,6 +2,8 @@ import crypto from "crypto";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { shippingFor } from "@/lib/shop";
+import { priceWithCoupon } from "@/lib/coupon-math";
+import { checkCoupon, COUPON_MSG } from "@/lib/coupons";
 import { buildCheckoutFields, ecpayConfig, newMerchantTradeNo } from "@/lib/ecpay";
 import { siteOrigin } from "@/lib/origin";
 
@@ -10,6 +12,7 @@ export const dynamic = "force-dynamic";
 type Body = {
   items?: { productId?: unknown; quantity?: unknown }[];
   customer?: { name?: unknown; email?: unknown; phone?: unknown; address?: unknown };
+  couponCode?: unknown; // 只收碼的文字；折扣、總額一律不收（CLAUDE.md 規則 1）
 };
 
 function bad(message: string, status = 400) {
@@ -81,10 +84,28 @@ export async function POST(req: Request) {
       }
     }
 
-    // 4. 後端自己算錢
+    // 4. 後端自己算錢（有優惠碼時，先在這裡檢查能不能用，見 docs/coupon/SDD.md 4.3）
     const subtotal = products.reduce((s: number, p: { id: number; price: number }) => s + p.price * qty.get(p.id)!, 0);
-    const shipping = shippingFor(subtotal);
-    const total = subtotal + shipping;
+    const hasCoupon = typeof body.couponCode === "string" && body.couponCode.trim() !== "";
+    let couponId: number | null = null;
+    let couponCode: string | null = null;
+    let priced = priceWithCoupon(subtotal, 0, shippingFor);
+    if (hasCoupon) {
+      const r = await checkCoupon(client, body.couponCode, subtotal, email);
+      if (!r.ok) {
+        await client.query("ROLLBACK");
+        const msg = r.reason === "min_subtotal" ? COUPON_MSG.minSubtotal(r.minSubtotal!) : COUPON_MSG.unusableAtCheckout;
+        return NextResponse.json({ error: msg, couponError: true }, { status: 400 });
+      }
+      couponId = r.coupon.id;
+      couponCode = r.coupon.code;
+      priced = r;
+    }
+    if (!priced) {
+      await client.query("ROLLBACK");
+      return bad("訂單金額不正確，請重新整理購物車");
+    }
+    const { discount, shipping, total } = priced;
 
     // 5. 客人：同一個 email 只存一筆，資料以最新一次為準
     const { rows: c } = await client.query(
@@ -98,9 +119,9 @@ export async function POST(req: Request) {
     const tradeNo = newMerchantTradeNo();
     const token = crypto.randomBytes(24).toString("hex");
     const { rows: o } = await client.query(
-      `INSERT INTO orders (customer_id, subtotal, shipping_fee, total, merchant_trade_no, access_token)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-      [c[0].id, subtotal, shipping, total, tradeNo, token]
+      `INSERT INTO orders (customer_id, subtotal, shipping_fee, total, merchant_trade_no, access_token, coupon_id, coupon_code, discount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+      [c[0].id, subtotal, shipping, total, tradeNo, token, couponId, couponCode, discount]
     );
     const orderId: number = o[0].id;
     for (const p of products) {
@@ -115,7 +136,8 @@ export async function POST(req: Request) {
     const origin = siteOrigin(req.headers);
     const itemName =
       products.map((p: { id: number; name: string }) => `${p.name.replace(/#/g, "")} x ${qty.get(p.id)}`).join("#") +
-      (shipping ? "#運費" : "");
+      (shipping ? "#運費" : "") +
+      (discount ? `#優惠折抵 ${discount} 元` : "");
     const ecpay = buildCheckoutFields({
       merchantTradeNo: tradeNo,
       total,

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import SetupNotice, { dbErrorReason } from "@/components/SetupNotice";
 import { db } from "@/lib/db";
 import { adminEnabled, isAdmin } from "@/lib/admin-auth";
@@ -11,6 +12,7 @@ export const metadata: Metadata = { title: `店家後台｜${SHOP.name}`, robots
 
 type Row = {
   id: number; status: string; payment_status: string; total: number; review_note: string | null;
+  coupon_code: string | null; discount: number;
   created_at: Date; name: string; email: string; items: string;
 };
 
@@ -44,17 +46,27 @@ export default async function Admin({ searchParams }: { searchParams: Promise<{ 
 
   let orders: Row[] = [];
   let revenue = 0;
+  let discountTotal = 0;
   let paidCount = 0;
   try {
-    // 營收：只算已付款的訂單，金額用訂單明細裡的「成交單價」，不是商品現在的價格
+    // 營收：只算已付款的訂單，金額用訂單明細裡的「成交單價」，不是商品現在的價格，再扣掉優惠折扣。
+    // 折扣要用另一個子查詢加總：和明細接在一起加，一張訂單有幾項商品折扣就會被重複算幾次。
     const r = await db().query(`
-      SELECT COALESCE(SUM(oi.unit_price * oi.quantity), 0)::int AS revenue, COUNT(DISTINCT o.id)::int AS n
-      FROM orders o JOIN order_items oi ON oi.order_id = o.id
-      WHERE o.payment_status = 'paid' AND o.status <> 'cancelled'`);
-    revenue = r.rows[0].revenue;
+      SELECT
+        (SELECT COALESCE(SUM(oi.unit_price * oi.quantity), 0)
+           FROM orders o JOIN order_items oi ON oi.order_id = o.id
+          WHERE o.payment_status = 'paid' AND o.status <> 'cancelled')::int AS gross,
+        (SELECT COALESCE(SUM(o.discount), 0)
+           FROM orders o
+          WHERE o.payment_status = 'paid' AND o.status <> 'cancelled')::int AS discount_total,
+        (SELECT COUNT(*)
+           FROM orders o
+          WHERE o.payment_status = 'paid' AND o.status <> 'cancelled')::int AS n`);
+    discountTotal = r.rows[0].discount_total;
+    revenue = r.rows[0].gross - discountTotal;
     paidCount = r.rows[0].n;
     orders = (await db().query(`
-      SELECT o.id, o.status, o.payment_status, o.total, o.review_note, o.created_at, c.name, c.email,
+      SELECT o.id, o.status, o.payment_status, o.total, o.review_note, o.created_at, o.coupon_code, o.discount, c.name, c.email,
              string_agg(oi.product_name || ' × ' || oi.quantity, '、' ORDER BY oi.id) AS items
       FROM orders o JOIN customers c ON c.id = o.customer_id JOIN order_items oi ON oi.order_id = o.id
       GROUP BY o.id, c.name, c.email ORDER BY o.id DESC LIMIT 100`)).rows;
@@ -69,11 +81,15 @@ export default async function Admin({ searchParams }: { searchParams: Promise<{ 
     <div className="section">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h1 style={{ margin: 0 }}>店家後台</h1>
-        <form action={logout}><button className="btn ghost" type="submit">登出</button></form>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <Link className="btn ghost" href="/admin/coupons">優惠碼</Link>
+          <form action={logout}><button className="btn ghost" type="submit">登出</button></form>
+        </div>
       </div>
 
       <div className="stats">
-        <div className="stat"><span className="hint">商品營收（不含運費）</span><b>{formatNT(revenue)}</b></div>
+        <div className="stat"><span className="hint">商品營收（不含運費，已扣折扣）</span><b>{formatNT(revenue)}</b></div>
+        <div className="stat"><span className="hint">折扣總額</span><b>{formatNT(discountTotal)}</b></div>
         <div className="stat"><span className="hint">已付款訂單</span><b>{paidCount} 張</b></div>
         <div className="stat"><span className="hint">全部訂單</span><b>{orders.length} 張</b></div>
       </div>
@@ -106,7 +122,10 @@ export default async function Admin({ searchParams }: { searchParams: Promise<{ 
                   <td>#{o.id}<br /><span className="hint">{new Date(o.created_at).toLocaleString("zh-TW", { timeZone: "Asia/Taipei" })}</span></td>
                   <td>{o.name}<br /><span className="hint">{o.email}</span></td>
                   <td>{o.items}</td>
-                  <td className="nowrap">{formatNT(o.total)}</td>
+                  <td className="nowrap">
+                    {formatNT(o.total)}
+                    {o.discount > 0 && <><br /><span className="hint">{o.coupon_code} −{formatNT(o.discount)}</span></>}
+                  </td>
                   <td><span className={`badge ${o.payment_status}`}>{PAYMENT_STATUS[o.payment_status]}</span></td>
                   <td><span className={`badge ${o.status}`}>{ORDER_STATUS[o.status]}</span></td>
                   <td>

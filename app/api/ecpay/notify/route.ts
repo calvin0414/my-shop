@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { ecpayConfig, verifyCheckMacValue } from "@/lib/ecpay";
+import { countPaidUses, countPaidUsesByCustomer } from "@/lib/coupons";
 
 export const dynamic = "force-dynamic";
 
@@ -50,7 +51,7 @@ export async function POST(req: Request) {
     }
 
     const { rows } = await client.query(
-      "SELECT id, status, payment_status, total FROM orders WHERE merchant_trade_no = $1 FOR UPDATE",
+      "SELECT id, status, payment_status, total, coupon_id, customer_id FROM orders WHERE merchant_trade_no = $1 FOR UPDATE",
       [merchantTradeNo]
     );
     const order = rows[0];
@@ -96,6 +97,28 @@ export async function POST(req: Request) {
            FROM order_items oi WHERE oi.order_id = $1 AND oi.product_id = p.id`,
           [order.id]
         );
+        // 用了優惠碼：付款成功才算用掉一次。超過上限不擋單，交給人工處理（docs/coupon/SDD.md 4.4）
+        if (order.coupon_id) {
+          // 鎖住這個碼，同一個碼的付款通知一筆一筆處理，次數才不會算錯
+          const { rows: cr } = await client.query(
+            "SELECT code, max_uses, per_email_limit FROM coupons WHERE id = $1 FOR UPDATE",
+            [order.coupon_id]
+          );
+          const cp = cr[0];
+          if (cp) {
+            const used = await countPaidUses(client, order.coupon_id);
+            const mine = await countPaidUsesByCustomer(client, order.coupon_id, order.customer_id);
+            const notes: string[] = [];
+            if (cp.max_uses !== null && used > cp.max_uses) notes.push(`已超過總使用上限（${used}/${cp.max_uses}）`);
+            if (mine > cp.per_email_limit) notes.push(`已超過每個 Email 的使用上限（${mine}/${cp.per_email_limit}）`);
+            if (notes.length) {
+              await client.query("UPDATE orders SET review_note = $2 WHERE id = $1", [
+                order.id,
+                `優惠碼 ${cp.code} ${notes.join("，")}，請確認是否補收差額或接受`,
+              ]);
+            }
+          }
+        }
       }
     } else if (order.payment_status === "unpaid") {
       await client.query("UPDATE orders SET payment_status = 'failed' WHERE id = $1", [order.id]);

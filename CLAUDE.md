@@ -16,7 +16,7 @@
 3. **不准修改、讀出或印出 `.env.local` 的內容。** 需要新的環境變數時，加到 `.env.example`（只寫名稱和說明，不寫秘密的值），再告訴使用者要自己填在哪裡。
 4. **訂單狀態與付款狀態是兩個欄位。** 狀態只能照 `lib/orders.ts` 的 `ALLOWED_NEXT` 走。`pending → confirmed` 只能由 `/api/ecpay/notify` 觸發。
 5. **付款通知必須冪等。** `/api/ecpay/notify` 先檢查 CheckMacValue，再用 `payments.ecpay_trade_no` 確認沒處理過才處理。成功時一定回 `1|OK`。
-6. **營收用成交單價。** 計算營收用 `order_items.unit_price × quantity`，不用 `products.price`。
+6. **營收用成交單價。** 計算營收用 `order_items.unit_price × quantity`，不用 `products.price`。有優惠折扣時，營收再扣掉 `orders.discount`；不准把折扣分攤進 `order_items.unit_price`。
 7. **看訂單要確認是本人。** `/orders/[id]` 必須比對 cookie 裡的 access token；後台每個動作都要先檢查 `isAdmin()`。
 8. **動到資料庫結構或資料前，先問。** 改資料表請改 `scripts/schema.sql` 並說明會不會影響既有資料；刪除資料的指令一律先讓使用者確認。Git 還原不會把資料庫的資料救回來。
 
