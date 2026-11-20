@@ -92,3 +92,18 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS discount    INTEGER NOT NULL DEFAULT
 
 -- 查「某個碼被付款用了幾次」時用
 CREATE INDEX IF NOT EXISTS orders_coupon_id_idx ON orders (coupon_id) WHERE coupon_id IS NOT NULL;
+
+-- ===== 訂單收件資料（2026-11 新增）=====
+
+-- 每張訂單存下「下單當下」的收件人、電話、地址。
+-- 客人資料表同一個 Email 只有一筆、會被下一次下單蓋掉，所以出貨要看這裡，不看 customers。
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS ship_name    TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS ship_phone   TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS ship_address TEXT;
+
+-- 補舊單：加欄位之前的訂單沒有記錄，用客人資料表「目前」的資料補上（只補還是空的，重複執行不會蓋掉）。
+-- 注意：若那位客人之後又下過單，補進來的是最新一次的資料，不一定是當時的地址。
+UPDATE orders o
+   SET ship_name = c.name, ship_phone = c.phone, ship_address = c.address
+  FROM customers c
+ WHERE c.id = o.customer_id AND o.ship_name IS NULL;

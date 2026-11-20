@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: `店家後台｜${SHOP.name}`, robots
 type Row = {
   id: number; status: string; payment_status: string; total: number; review_note: string | null;
   coupon_code: string | null; discount: number;
-  created_at: Date; name: string; email: string; items: string;
+  created_at: Date; ship_name: string | null; ship_phone: string | null; ship_address: string | null; email: string; items: string;
 };
 
 export default async function Admin({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
@@ -66,10 +66,11 @@ export default async function Admin({ searchParams }: { searchParams: Promise<{ 
     revenue = r.rows[0].gross - discountTotal;
     paidCount = r.rows[0].n;
     orders = (await db().query(`
-      SELECT o.id, o.status, o.payment_status, o.total, o.review_note, o.created_at, o.coupon_code, o.discount, c.name, c.email,
+      SELECT o.id, o.status, o.payment_status, o.total, o.review_note, o.created_at, o.coupon_code, o.discount,
+             o.ship_name, o.ship_phone, o.ship_address, c.email,
              string_agg(oi.product_name || ' × ' || oi.quantity, '、' ORDER BY oi.id) AS items
       FROM orders o JOIN customers c ON c.id = o.customer_id JOIN order_items oi ON oi.order_id = o.id
-      GROUP BY o.id, c.name, c.email ORDER BY o.id DESC LIMIT 100`)).rows;
+      GROUP BY o.id, c.email ORDER BY o.id DESC LIMIT 100`)).rows;
   } catch (e) {
     return <SetupNotice reason={dbErrorReason(e)} />;
   }
@@ -120,7 +121,15 @@ export default async function Admin({ searchParams }: { searchParams: Promise<{ 
               {orders.map((o) => (
                 <tr key={o.id}>
                   <td>#{o.id}<br /><span className="hint">{new Date(o.created_at).toLocaleString("zh-TW", { timeZone: "Asia/Taipei" })}</span></td>
-                  <td>{o.name}<br /><span className="hint">{o.email}</span></td>
+                  <td>
+                    {/* 收件資料讀這張訂單自己存的，不讀客人資料表（同一個 Email 再下單會蓋掉那裡） */}
+                    {o.ship_name ? (
+                      <>{o.ship_name}<br />{o.ship_phone}<br />{o.ship_address}</>
+                    ) : (
+                      <span className="hint">（舊訂單，未記錄收件資料）</span>
+                    )}
+                    <br /><span className="hint">{o.email}</span>
+                  </td>
                   <td>{o.items}</td>
                   <td className="nowrap">
                     {formatNT(o.total)}

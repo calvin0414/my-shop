@@ -115,13 +115,14 @@ export async function POST(req: Request) {
       [name, email, phone, address]
     );
 
-    // 6. 訂單與明細（明細記下成交當下的單價）
+    // 6. 訂單與明細（明細記下成交當下的單價；訂單記下這次的收件人、電話、地址，之後客人資料被改也不影響這張單）
     const tradeNo = newMerchantTradeNo();
     const token = crypto.randomBytes(24).toString("hex");
     const { rows: o } = await client.query(
-      `INSERT INTO orders (customer_id, subtotal, shipping_fee, total, merchant_trade_no, access_token, coupon_id, coupon_code, discount)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-      [c[0].id, subtotal, shipping, total, tradeNo, token, couponId, couponCode, discount]
+      `INSERT INTO orders (customer_id, subtotal, shipping_fee, total, merchant_trade_no, access_token, coupon_id, coupon_code, discount,
+                           ship_name, ship_phone, ship_address)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+      [c[0].id, subtotal, shipping, total, tradeNo, token, couponId, couponCode, discount, name, phone, address]
     );
     const orderId: number = o[0].id;
     for (const p of products) {
