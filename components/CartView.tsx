@@ -40,8 +40,8 @@ export default function CartView({ shippingFee, freeOver }: { shippingFee: numbe
   const shown = lines.filter((l) => products[l.productId]);
   const subtotal = shown.reduce((s, l) => s + products[l.productId].price * l.quantity, 0);
   const discount = coupon?.discount ?? 0;
-  // 免運看折扣後的金額（和後端 lib/coupon-math.ts 的規則相同）
-  const shipping = subtotal - discount >= freeOver || subtotal === 0 ? 0 : shippingFee;
+  // 免運看折扣前的商品小計（和後端 lib/coupon-math.ts 的規則相同）
+  const shipping = subtotal >= freeOver || subtotal === 0 ? 0 : shippingFee;
   const itemsKey = JSON.stringify(shown.map((l) => [l.productId, l.quantity]));
 
   async function previewCoupon(code: string): Promise<{ ok: boolean; code?: string; discount?: number; error?: string }> {

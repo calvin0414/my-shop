@@ -24,11 +24,11 @@ export function computeDiscount(rule: CouponRule, subtotal: number): number {
   return 0;
 }
 
-// 折扣、運費、總額。運費用折扣後的金額判斷；總額不到 1 元回傳 null（不能交給綠界）。
+// 折扣、運費、總額。運費用折扣前的商品小計判斷；總額不到 1 元回傳 null（不能交給綠界）。
 export function priceWithCoupon(subtotal: number, discount: number, shippingFor: (s: number) => number): Priced | null {
   const d = Math.max(0, Math.min(discount, subtotal));
   const after = subtotal - d;
-  const shipping = shippingFor(after);
+  const shipping = shippingFor(subtotal);
   const total = after + shipping;
   if (total < 1) return null;
   return { discount: d, shipping, total };

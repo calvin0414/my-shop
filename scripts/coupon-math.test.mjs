@@ -40,10 +40,17 @@ test("不認得的種類或不合理的數值，一律不折", () => {
   assert.equal(computeDiscount({ kind: "amount", value: 1.5 }, 659), 0);
 });
 
-test("免運用折扣後的金額判斷（F2-4）", () => {
-  assert.deepEqual(priceWithCoupon(1000, 100, shipping), { discount: 100, shipping: 80, total: 980 });
+test("免運用折扣前的商品小計判斷（F2-4）", () => {
+  // 小計 1000 已達免運門檻，折 100 之後仍然免運
+  assert.deepEqual(priceWithCoupon(1000, 100, shipping), { discount: 100, shipping: 0, total: 900 });
+  assert.deepEqual(priceWithCoupon(1099, 100, shipping), { discount: 100, shipping: 0, total: 999 });
   assert.deepEqual(priceWithCoupon(1200, 100, shipping), { discount: 100, shipping: 0, total: 1100 });
+  assert.deepEqual(priceWithCoupon(999, 100, shipping), { discount: 100, shipping: 80, total: 979 });
   assert.deepEqual(priceWithCoupon(659, 0, shipping), { discount: 0, shipping: 80, total: 739 });
+});
+
+test("小計達免運門檻、折扣等於小計時，總額 0 元不能用", () => {
+  assert.equal(priceWithCoupon(1000, 1000, shipping), null);
 });
 
 test("總額＝小計−折扣＋運費；折扣不超過小計（F2-5）", () => {
