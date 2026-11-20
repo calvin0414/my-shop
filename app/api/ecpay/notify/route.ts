@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { ecpayConfig, verifyCheckMacValue } from "@/lib/ecpay";
 import { countPaidUses, countPaidUsesByCustomer } from "@/lib/coupons";
+import { findShortages, shortageNote } from "@/lib/stock-check";
 
 export const dynamic = "force-dynamic";
 
@@ -91,7 +92,22 @@ export async function POST(req: Request) {
            WHERE id = $1`,
           [order.id]
         );
-        // 確定收到錢，才扣庫存
+        // 需要人工處理的事項先收集起來，最後一次寫進 review_note，避免後寫的蓋掉先寫的
+        const reviewNotes: string[] = [];
+
+        // 扣庫存前先鎖住商品、核對罐數：下單時不保留庫存，兩張單可能搶同一批貨（超賣）
+        const { rows: stockLines } = await client.query(
+          `SELECT oi.product_name, oi.quantity, p.stock
+             FROM order_items oi JOIN products p ON p.id = oi.product_id
+            WHERE oi.order_id = $1
+            ORDER BY p.id
+              FOR UPDATE OF p`,
+          [order.id]
+        );
+        const oversold = shortageNote(findShortages(stockLines));
+        if (oversold) reviewNotes.push(oversold);
+
+        // 確定收到錢，才扣庫存（不夠時扣到 0 為止，上面已記下超賣提醒）
         await client.query(
           `UPDATE products p SET stock = GREATEST(p.stock - oi.quantity, 0)
            FROM order_items oi WHERE oi.order_id = $1 AND oi.product_id = p.id`,
@@ -112,12 +128,13 @@ export async function POST(req: Request) {
             if (cp.max_uses !== null && used > cp.max_uses) notes.push(`已超過總使用上限（${used}/${cp.max_uses}）`);
             if (mine > cp.per_email_limit) notes.push(`已超過每個 Email 的使用上限（${mine}/${cp.per_email_limit}）`);
             if (notes.length) {
-              await client.query("UPDATE orders SET review_note = $2 WHERE id = $1", [
-                order.id,
-                `優惠碼 ${cp.code} ${notes.join("，")}，請確認是否補收差額或接受`,
-              ]);
+              reviewNotes.push(`優惠碼 ${cp.code} ${notes.join("，")}，請確認是否補收差額或接受`);
             }
           }
+        }
+
+        if (reviewNotes.length) {
+          await client.query("UPDATE orders SET review_note = $2 WHERE id = $1", [order.id, reviewNotes.join("。")]);
         }
       }
     } else if (order.payment_status === "unpaid") {
